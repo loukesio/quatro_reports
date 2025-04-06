@@ -1,0 +1,244 @@
+---
+title: "🧪 Penguin Classification Report"
+format:
+  html:
+    theme: flatly
+    code-fold: true
+    code-tools: true
+    css: styles.css
+    toc: true
+    df-print: paged
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+# 🐧 Introduction
+
+In this report, we explore the Palmer Penguins dataset to classify penguins by sex using morphological features. We build two predictive models (logistic regression and random forest), compare them using **bootstrap resampling**, and finally evaluate performance on a held-out test set.
+
+---
+
+# 📊 Data Exploration
+
+```{r}
+library(tidyverse)
+library(palmerpenguins)
+
+# Glimpse the dataset
+glimpse(penguins)
+
+# Basic visualization
+penguins %>%
+  filter(!is.na(sex)) %>%
+  ggplot(aes(flipper_length_mm, bill_length_mm, color = sex, size = body_mass_g)) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values=c("#FF2B4F","#003399")) +
+  labs(size = "Body Mass (g)") +  # Rename the legend for body_mass_g
+  facet_wrap(~species) +
+  theme_bw() +
+  theme(strip.background = element_rect(fill = NA), 
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_line(color="grey97"))
+```
+
+---
+
+# 🧼 Data Preprocessing
+
+```{r}
+# Remove NA in target and drop irrelevant columns
+penguins_df <- penguins %>%
+  filter(!is.na(sex)) %>%
+  select(-year, -island)
+
+```
+
+---
+
+# ✂️ Train/Test Split
+
+```{r}
+library(tidymodels)
+set.seed(123)
+
+# Stratified split to preserve class balance
+penguin_split <- initial_split(penguins_df, strata = sex)
+penguin_train <- training(penguin_split)
+penguin_test <- testing(penguin_split)
+```
+
+---
+
+# 🌀 Bootstrapping (Validation Trick 💡)
+
+```{r}
+set.seed(123)
+penguin_boot <- bootstraps(penguin_train, times = 25)
+
+penguin_boot
+```
+
+---
+
+# 🧠 Model Specifications
+
+```{r}
+# Logistic Regression
+glm_spec <- logistic_reg() %>%
+  set_engine("glm")
+
+# Random Forest
+rf_spec <- rand_forest() %>%
+  set_mode("classification") %>%
+  set_engine("ranger")
+```
+
+---
+
+# 🧱 Create Workflow
+
+```{r}
+penguin_wf <- workflow() %>%
+  add_formula(sex ~ .)
+```
+
+---
+
+# 🔁 Fit Models via Bootstrapping (Validation Step)
+
+```{r}
+# Logistic regression with resamples
+glm_rs <- penguin_wf %>%
+  add_model(glm_spec) %>%
+  fit_resamples(
+    resamples = penguin_boot,
+    control = control_resamples(save_pred = TRUE)
+  )
+
+# Random forest with resamples
+rf_rs <- penguin_wf %>%
+  add_model(rf_spec) %>%
+  fit_resamples(
+    resamples = penguin_boot,
+    control = control_resamples(save_pred = TRUE)
+  )
+```
+
+---
+
+# 📈 Model Comparison
+
+```{r}
+# Accuracy and AUC from both models
+bind_rows(
+  collect_metrics(glm_rs) %>% mutate(model = "Logistic Regression"),
+  collect_metrics(rf_rs) %>% mutate(model = "Random Forest")
+)
+```
+
+---
+
+# 📉 ROC Curves (Resampled)
+
+```{r}
+glm_rs %>%
+  collect_predictions() %>%
+  group_by(id) %>%
+  roc_curve(sex, .pred_female) %>%
+  ggplot(aes(1 - specificity, sensitivity, color = id)) +
+  geom_abline(lty = 2, color = "gray80") +
+  geom_path(show.legend = FALSE, alpha = 0.7) +
+  coord_equal()
+```
+
+---
+
+# 🧪 Final Evaluation on Test Set
+
+```{r}
+penguin_final <- penguin_wf %>%
+  add_model(glm_spec) %>%
+  last_fit(penguin_split)
+
+collect_metrics(penguin_final)
+```
+
+---
+
+# 📊 Final Confusion Matrix
+
+```{r}
+collect_predictions(penguin_final) %>%
+  conf_mat(sex, .pred_class)
+```
+
+---
+
+# 🧠 Model Interpretation
+
+```{r}
+penguin_final$.workflow[[1]] %>%
+  tidy(exponentiate = TRUE)
+```
+
+---
+
+# 💡 About the Validation Trick
+
+We used **bootstrap resampling on the training data** instead of a separate validation set. Here's why:
+
+- Bootstrap lets us simulate "many datasets" from our training set.
+- Models are trained on bootstraps and validated on the **out-of-bag** data (not included in the resample).
+- This means the model is validated multiple times **without needing to split the training set again**.
+- The test set is kept **untouched** for a final evaluation — giving us a realistic estimate of performance on new data.
+
+---
+
+# ROC Curve, AUC, and Model Fit
+
+The **ROC (Receiver Operating Characteristic) curve** is a graphical tool used to evaluate the performance of a binary classification model. It shows the trade-off between:
+
+- **True Positive Rate (Sensitivity)** — how well the model identifies the positive class
+- **False Positive Rate (1 - Specificity)** — how often the model incorrectly labels the negative class as positive
+
+Each point on the ROC curve represents a different classification threshold.
+
+### 🔢 AUC – Area Under the Curve
+
+The **AUC** quantifies the ROC curve as a single number between 0 and 1:
+
+- **1.0** → perfect classification
+- **0.5** → no better than random guessing
+- **> 0.8** → considered a strong model
+
+### 🕵️‍♀️ Checking for Overfitting or Underfitting
+
+We use AUC values from two stages to detect overfitting:
+
+- **Internal validation**: from resampled training data (e.g., via bootstrapping)
+- **Final test set**: from truly unseen data (held out at the beginning)
+
+**Signs of overfitting**:
+- High AUC on resamples (e.g., 0.93)
+- Much lower AUC on the test set (e.g., 0.74)
+
+**Signs of underfitting**:
+- Low AUC on both resamples and test set (e.g., ~0.6)
+- Model may be too simple or features not informative
+
+Always compare **validation AUC** vs **test AUC** to judge model generalization.
+
+
+
+# ✅ Summary
+
+- We built two models to predict penguin sex.
+- Used **bootstrapping** to internally validate models without needing a separate validation set.
+- Finally evaluated on a test set to ensure generalization.
+- Logistic regression had interpretable coefficients; random forest may offer better accuracy depending on results.
+
+---
+
+*Report generated using Quarto. Source: Palmer Penguins dataset.*

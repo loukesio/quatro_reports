@@ -1,0 +1,30 @@
+
+body {
+  font-family: 'Arial', sans-serif;
+  line-height: 1.6;
+  background-color: #ffffff;
+}
+
+h1, h2, h3 {
+  font-family: 'Georgia', serif;
+  font-weight: bold;
+  color: #1e3a5f;
+}
+
+pre code {
+  background-color: #f8f8f8;
+  padding: 10px;
+  border-left: 4px solid #007acc;
+  display: block;
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th, td {
+  border: 1px solid #ddd;
+  padding: 8px;
+}
